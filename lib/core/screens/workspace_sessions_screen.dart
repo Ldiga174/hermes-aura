@@ -249,6 +249,7 @@ class WorkspaceSessionsScreen extends StatefulWidget {
   final String title;
   final WorkspaceSessionView view;
   final WorkspaceSessionsLoader load;
+  final WorkspaceSessionsData? initialData;
   final ValueChanged<Session> onOpenSession;
   final WorkspaceSessionPromoter? onPromote;
   final LocalChatPinStore? pinStore;
@@ -267,6 +268,7 @@ class WorkspaceSessionsScreen extends StatefulWidget {
     required this.title,
     required this.view,
     required this.load,
+    this.initialData,
     required this.onOpenSession,
     this.onPromote,
     this.pinStore,
@@ -315,6 +317,7 @@ class _WorkspaceSessionsScreenState extends State<WorkspaceSessionsScreen>
   @override
   void initState() {
     super.initState();
+    _data = widget.initialData;
     WidgetsBinding.instance.addObserver(this);
     unawaited(_load());
   }

@@ -134,7 +134,26 @@ void main() {
       expect((await quick.load()).expiries, contains('session-beyond-scan'));
       expect(await pins.load(), contains('session-101'));
 
+      final completePageRequests = requested
+          .where((uri) => uri.queryParameters['limit'] == '100')
+          .length;
       await tester.tap(find.text('Chats').last);
+      await tester.pump();
+      // Home's complete list is already in memory. Chats must be usable
+      // before the optional Projects/archived metadata completes, without
+      // paying for the twenty-page walk a second time.
+      expect(
+        find.descendant(
+          of: find.byType(WorkspaceSessionsScreen),
+          matching: find.text('Chat 0'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(LoadingSkeleton), findsNothing);
+      expect(
+        requested.where((uri) => uri.queryParameters['limit'] == '100'),
+        hasLength(completePageRequests),
+      );
       await tester.pumpAndSettle();
       expect(find.byType(WorkspaceSessionsScreen), findsOneWidget);
       // Search proves the old unassigned row is in the complete Chats dataset,
@@ -150,4 +169,63 @@ void main() {
       expect(find.text('Late unassigned'), findsNWidgets(2));
     },
   );
+
+  testWidgets('opening Chats during Home scan shares the pending request', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(500, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final laterPage = Completer<http.Response>();
+    final requested = <Uri>[];
+    final client = MockClient((request) async {
+      requested.add(request.url);
+      if (request.url.queryParameters['limit'] == '5') {
+        return _page(List.generate(5, _row));
+      }
+      if (request.url.queryParameters['offset'] == '0') {
+        return _page(List.generate(100, _row));
+      }
+      return laterPage.future;
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: hermesTheme(Brightness.dark),
+        home: WorkspaceScreen(
+          connection: SavedConnection(
+            id: 'early-switch',
+            label: 'Test',
+            host: 'example.invalid',
+            port: 8642,
+            apiKey: 'test-key',
+          ),
+          testSessionsHttpClient: client,
+          turnSignalsLoader: (_) async => HomeTurnSignals.empty,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(
+      requested.where((uri) => uri.queryParameters['limit'] == '100'),
+      hasLength(2),
+    );
+
+    await tester.tap(find.text('Chats').last);
+    await tester.pump();
+    expect(
+      requested.where(
+        (uri) =>
+            uri.queryParameters['limit'] == '100' &&
+            uri.queryParameters['offset'] == '0',
+      ),
+      hasLength(1),
+    );
+
+    laterPage.complete(_page([]));
+    await tester.pumpAndSettle();
+    expect(find.text('Chat 0'), findsOneWidget);
+  });
 }

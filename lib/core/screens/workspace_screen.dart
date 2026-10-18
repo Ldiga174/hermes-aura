@@ -286,6 +286,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Map<String, String> _sessionTitles = const {};
   int _homeGeneration = 0;
   Future<List<Session>>? _homeFullScan;
+  List<Session>? _completeHomeSessions;
+  bool _chatsInitialLoadConsumed = false;
 
   /// Best-effort Project labels learned from the latest projects.tree read,
   /// used to carry context into chats opened from the global Chats browser.
@@ -432,6 +434,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         try {
           final full = await _loadFullHomeSessions();
           if (!mounted || generation != _homeGeneration) return;
+          _completeHomeSessions = List.unmodifiable(full);
           _onHomeSessions(full, generation: generation, complete: true);
           onUpdate(full);
         } catch (_) {
@@ -872,9 +875,19 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           title: context.l10n.chats,
           view: WorkspaceSessionView.all,
           embedded: true,
+          // Home already walked the complete bounded list. Show it now; the
+          // first Chats load adds Project/archive metadata in the background.
+          // An unknown claim map keeps Unassigned disabled until that read.
+          initialData: _completeHomeSessions == null
+              ? null
+              : WorkspaceSessionsData(
+                  sessions: _completeHomeSessions!,
+                  archivedQuickChatIds: _archivedQuickChats,
+                  projectsKnown: false,
+                ),
           pinStore: _pinStore,
           refreshInterval: widget.sessionsRefreshInterval,
-          load: _loadWorkspaceSessionsData,
+          load: _loadChatsSessionsData,
           onOpenSession: (session) => unawaited(
             _openSession(session, projectName: _chatProjectLabels[session.id]),
           ),
@@ -1258,8 +1271,22 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
-  Future<WorkspaceSessionsData> _loadWorkspaceSessionsData() async {
-    final sessions = await _loadSessions();
+  Future<WorkspaceSessionsData> _loadChatsSessionsData() {
+    final firstLoad = !_chatsInitialLoadConsumed;
+    _chatsInitialLoadConsumed = true;
+    // Reuse Home's complete list or its in-flight scan on first entry. Later
+    // refreshes read afresh so a new chat or title cannot stay stale forever.
+    final cached = firstLoad ? _completeHomeSessions : null;
+    final pending = firstLoad ? _homeFullScan : null;
+    return _loadWorkspaceSessionsData(
+      sessionsFuture: pending ?? (cached == null ? null : Future.value(cached)),
+    );
+  }
+
+  Future<WorkspaceSessionsData> _loadWorkspaceSessionsData({
+    Future<List<Session>>? sessionsFuture,
+  }) async {
+    final sessions = await (sessionsFuture ?? _loadSessions());
     _cacheSessionTitles(sessions);
 
     Set<String> claimed = const {};

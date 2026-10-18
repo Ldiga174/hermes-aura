@@ -265,6 +265,43 @@ void main() {
     expect(find.text('Daily driver'), findsOneWidget);
   });
 
+  testWidgets('cached chats render while metadata is still loading', (
+    tester,
+  ) async {
+    final metadata = Completer<WorkspaceSessionsData>();
+    final chat = _session('s1', 'Cached conversation');
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: hermesTheme(Brightness.dark),
+        home: WorkspaceSessionsScreen(
+          title: 'Chats',
+          view: WorkspaceSessionView.all,
+          embedded: true,
+          initialData: WorkspaceSessionsData(
+            sessions: [chat],
+            projectsKnown: false,
+          ),
+          load: () => metadata.future,
+          onOpenSession: (_) {},
+        ),
+      ),
+    );
+
+    expect(find.text('Cached conversation'), findsOneWidget);
+    expect(find.byType(LoadingSkeleton), findsNothing);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Unassigned'));
+    await tester.pump();
+    expect(find.text('Cached conversation'), findsNothing);
+
+    metadata.complete(
+      WorkspaceSessionsData(sessions: [chat], claimedSessionIds: const {}),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Cached conversation'), findsOneWidget);
+  });
+
   group('the Chats chip filters', () {
     final now = DateTime.fromMillisecondsSinceEpoch(1750000000 * 1000);
     final recent = _session('s1', 'Fresh', lastActive: 1750000000);
