@@ -284,6 +284,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   /// no new gateway contract; a turn whose chat is absent simply stays
   /// untitled rather than being dropped or given a fabricated name.
   Map<String, String> _sessionTitles = const {};
+  int _homeGeneration = 0;
 
   /// Best-effort Project labels learned from the latest projects.tree read,
   /// used to carry context into chats opened from the global Chats browser.
@@ -301,14 +302,18 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   late final WorkspaceTurnSignalsLoader _loadTurnSignals =
       widget.turnSignalsLoader ?? _loadTurnSignalsFromJournal;
 
-  Future<List<Session>> _loadSessionsFromGateway() async {
+  ApiClient get _sessionClient {
     final connection = widget.connection;
-    final api = _sessionsApi ??= ApiClient(
+    return _sessionsApi ??= ApiClient(
       baseUrl: connection.baseUrl,
       apiKey: connection.apiKey,
       pathPrefix: connection.gatewayPrefix ?? '',
       httpClient: widget.testSessionsHttpClient,
     );
+  }
+
+  Future<List<Session>> _loadSessionsFromGateway() async {
+    final api = _sessionClient;
     // Page through the whole visible list. The gateway serves newest-first
     // in a capped window; a single first-page request truncated the
     // Unassigned bucket (older unfiled chats never reached the device).
@@ -400,22 +405,69 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   /// `HomePaneState.refresh` only knows how to re-read sessions, and a digest
   /// ranked with stale signals is worse than one ranked with none.
   Future<List<Session>> _loadHome() {
-    unawaited(_refreshTurnSignals());
+    final generation = ++_homeGeneration;
+    unawaited(_refreshTurnSignals(generation));
     return _loadSessions().then((sessions) {
-      // Cache the titles for Activity. Done here rather than in a second
-      // request: the journal knows what ran, the session list knows what it
-      // was called, and only one of the two costs a round trip.
-      _cacheSessionTitles(sessions);
-      // Which quick chats have aged out. Recomputed from the session list
-      // rather than on a timer, so the retention rule is applied whenever
-      // Home is read and never fires while the app is closed.
-      unawaited(_refreshQuickChats(sessions));
-      // The Activity badge is the only signal of blocked work visible while
-      // the user is on another destination, so it cannot wait for the pane
-      // to be mounted for the first time.
-      unawaited(_refreshActivityBadge());
+      if (!mounted || generation != _homeGeneration) return sessions;
+      _onHomeSessions(sessions, generation: generation, complete: true);
       return sessions;
     });
+  }
+
+  Future<List<Session>> _loadHomeProgressively(
+    void Function(List<Session>? sessions) onUpdate,
+  ) async {
+    final generation = ++_homeGeneration;
+    unawaited(_refreshTurnSignals(generation));
+    // Stock may append pinned back-fill beyond the requested limit; the full
+    // scan below retains those rows and all older work.
+    final page = await _sessionClient.getSessionsPage(limit: 5);
+    final first = page.sessions.take(5).toList(growable: false);
+    if (!mounted || generation != _homeGeneration) return first;
+    _onHomeSessions(first, generation: generation, complete: false);
+    // Give the pane a frame to show the first slice before starting the scan.
+    unawaited(
+      Future<void>.delayed(Duration.zero, () async {
+        try {
+          final full = await _loadSessionsFromGateway();
+          if (!mounted || generation != _homeGeneration) return;
+          _onHomeSessions(full, generation: generation, complete: true);
+          onUpdate(full);
+        } catch (_) {
+          if (mounted && generation == _homeGeneration) onUpdate(null);
+        }
+      }),
+    );
+    return first;
+  }
+
+  void _onHomeSessions(
+    List<Session> sessions, {
+    required int generation,
+    required bool complete,
+  }) {
+    // Cache the titles for Activity. Done here rather than in a second
+    // request: the journal knows what ran, the session list knows what it
+    // was called, and only one of the two costs a round trip.
+    if (complete) {
+      _cacheSessionTitles(sessions);
+    } else {
+      _sessionTitles = Map.unmodifiable({
+        ..._sessionTitles,
+        for (final session in sessions)
+          if (session.title.trim().isNotEmpty) session.id: session.title.trim(),
+      });
+    }
+    // Which quick chats have aged out. Recomputed from the session list
+    // rather than on a timer, so the retention rule is applied whenever
+    // Home is read and never fires while the app is closed.
+    unawaited(
+      _refreshQuickChats(sessions, generation: generation, prune: complete),
+    );
+    // The Activity badge is the only signal of blocked work visible while
+    // the user is on another destination, so it cannot wait for the pane
+    // to be mounted for the first time.
+    unawaited(_refreshActivityBadge());
   }
 
   /// Opens the Quick chat lifecycle store for this connection.
@@ -437,17 +489,27 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   /// Also prunes records for chats the gateway no longer lists, so the store
   /// cannot grow without bound. A failure costs the archive rule for this
   /// refresh — never the session list itself.
-  Future<void> _refreshQuickChats(List<Session> sessions) async {
+  Future<void> _refreshQuickChats(
+    List<Session> sessions, {
+    required int generation,
+    required bool prune,
+  }) async {
     Set<String> archived;
     try {
       final store = await _quickChatStore();
       final now = DateTime.now();
-      await store.prune({for (final session in sessions) session.id}, now: now);
+      if (!mounted || generation != _homeGeneration) return;
+      // Absence from five rows says nothing about retention.
+      if (prune) {
+        await store.prune({
+          for (final session in sessions) session.id,
+        }, now: now);
+      }
       archived = (await store.load()).archivedAt(now);
     } catch (_) {
       archived = const {};
     }
-    if (!mounted) return;
+    if (!mounted || generation != _homeGeneration) return;
     if (archived.length == _archivedQuickChats.length &&
         archived.every(_archivedQuickChats.contains)) {
       return;
@@ -512,8 +574,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     // user opens; read the sessions once so rows are not all untitled. A
     // failed read degrades a row's title, never the timeline itself.
     if (_sessionTitles.isEmpty) {
+      final generation = _homeGeneration;
       try {
-        _cacheSessionTitles(await _loadSessions());
+        final sessions = await _loadSessions();
+        if (mounted && generation == _homeGeneration) {
+          _cacheSessionTitles(sessions);
+        }
       } catch (_) {}
     }
     final feed = await loader(widget.connection, _sessionTitles);
@@ -540,7 +606,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     return feed;
   }
 
-  Future<void> _refreshTurnSignals() async {
+  Future<void> _refreshTurnSignals(int generation) async {
     HomeTurnSignals signals;
     try {
       signals = await _loadTurnSignals(widget.connection);
@@ -548,7 +614,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       // A journal that cannot be read degrades the ranking, never the screen.
       signals = HomeTurnSignals.empty;
     }
-    if (!mounted) return;
+    if (!mounted || generation != _homeGeneration) return;
     setState(() => _turnSignals = signals);
   }
 
@@ -723,6 +789,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   @override
   void dispose() {
+    _homeGeneration++;
     // Only tear down what this screen created; an injected repository stays
     // owned by whoever supplied it.
     if (_ownsRepository) {
@@ -838,6 +905,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         return HomePane(
           key: _homeKey,
           loadSessions: _loadHome,
+          loadProgressiveSessions: widget.sessionsLoader == null
+              ? _loadHomeProgressively
+              : null,
           attention: _turnSignals.attention,
           running: _turnSignals.running,
           archived: _archivedQuickChats,
