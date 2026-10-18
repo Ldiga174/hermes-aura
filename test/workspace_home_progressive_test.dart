@@ -11,6 +11,7 @@ import 'package:hermes_android/core/services/quick_chat_store.dart';
 import 'package:hermes_android/core/theme/hermes_theme.dart';
 import 'package:hermes_android/core/utils/home_turn_signals.dart';
 import 'package:hermes_android/core/widgets/hermes_components.dart';
+import 'package:hermes_android/core/widgets/home_pane.dart';
 
 import 'package:hermes_android/l10n/app_localizations.dart';
 import 'package:http/http.dart' as http;
@@ -70,6 +71,12 @@ void main() {
         'session-101',
         expiresAt: DateTime.now().subtract(const Duration(days: 1)),
       );
+      // A bounded or mutable OFFSET scan cannot prove this old chat was
+      // deleted; its archive deadline must survive a completed Home scan.
+      await quick.record(
+        'session-beyond-scan',
+        expiresAt: DateTime.now().subtract(const Duration(days: 1)),
+      );
       final pins = LocalChatPinStore(preferences, connectionId: connection.id);
       await pins.setPinned('session-101', pinned: true);
       await tester.pumpWidget(
@@ -97,7 +104,21 @@ void main() {
       expect(find.text('Late unassigned'), findsNothing);
       expect(find.byType(LoadingSkeleton), findsNothing);
       expect((await quick.load()).expiries, contains('session-101'));
+      expect((await quick.load()).expiries, contains('session-beyond-scan'));
       expect(await pins.load(), contains('session-101'));
+
+      final home = tester.state<HomePaneState>(find.byType(HomePane));
+      unawaited(home.refresh());
+      unawaited(home.refresh());
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(
+        requested.where(
+          (uri) =>
+              uri.queryParameters['limit'] == '100' &&
+              uri.queryParameters['offset'] == '0',
+        ),
+        hasLength(1),
+      );
 
       laterPage.complete(_page([_row(100, pinned: true), _row(101)]));
       await tester.pumpAndSettle();
@@ -110,6 +131,7 @@ void main() {
       expect(find.text('Late unassigned'), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsNothing);
       expect((await quick.load()).expiries, contains('session-101'));
+      expect((await quick.load()).expiries, contains('session-beyond-scan'));
       expect(await pins.load(), contains('session-101'));
 
       await tester.tap(find.text('Chats').last);

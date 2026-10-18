@@ -285,6 +285,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   /// untitled rather than being dropped or given a fabricated name.
   Map<String, String> _sessionTitles = const {};
   int _homeGeneration = 0;
+  Future<List<Session>>? _homeFullScan;
 
   /// Best-effort Project labels learned from the latest projects.tree read,
   /// used to carry context into chats opened from the global Chats browser.
@@ -429,7 +430,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     unawaited(
       Future<void>.delayed(Duration.zero, () async {
         try {
-          final full = await _loadSessionsFromGateway();
+          final full = await _loadFullHomeSessions();
           if (!mounted || generation != _homeGeneration) return;
           _onHomeSessions(full, generation: generation, complete: true);
           onUpdate(full);
@@ -439,6 +440,22 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
       }),
     );
     return first;
+  }
+
+  /// A refresh may supersede the Home projection without making the ongoing
+  /// full-page scan useless. Share that scan instead of starting another
+  /// twenty-request walk for each pull-to-refresh or return from a chat.
+  Future<List<Session>> _loadFullHomeSessions() {
+    final pending = _homeFullScan;
+    if (pending != null) return pending;
+    final scan = _loadSessionsFromGateway();
+    _homeFullScan = scan;
+    void clear() {
+      if (identical(_homeFullScan, scan)) _homeFullScan = null;
+    }
+
+    unawaited(scan.then<void>((_) => clear(), onError: (Object _) => clear()));
+    return scan;
   }
 
   void _onHomeSessions(
@@ -458,12 +475,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           if (session.title.trim().isNotEmpty) session.id: session.title.trim(),
       });
     }
-    // Which quick chats have aged out. Recomputed from the session list
-    // rather than on a timer, so the retention rule is applied whenever
-    // Home is read and never fires while the app is closed.
-    unawaited(
-      _refreshQuickChats(sessions, generation: generation, prune: complete),
-    );
+    // The stored deadline determines which Quick chats are archived. A page
+    // scan (including the capped full scan) is not a deletion-safe snapshot.
+    unawaited(_refreshQuickChats(generation));
     // The Activity badge is the only signal of blocked work visible while
     // the user is on another destination, so it cannot wait for the pane
     // to be mounted for the first time.
@@ -484,27 +498,15 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
-  /// Recomputes which quick chats have passed their 72 h deadline.
-  ///
-  /// Also prunes records for chats the gateway no longer lists, so the store
-  /// cannot grow without bound. A failure costs the archive rule for this
-  /// refresh — never the session list itself.
-  Future<void> _refreshQuickChats(
-    List<Session> sessions, {
-    required int generation,
-    required bool prune,
-  }) async {
+  /// Recomputes which quick chats have passed their 72 h deadline. Do not
+  /// prune on absence from mutable OFFSET pages: a moving or over-cap session
+  /// can be missed without having been deleted.
+  Future<void> _refreshQuickChats(int generation) async {
     Set<String> archived;
     try {
       final store = await _quickChatStore();
       final now = DateTime.now();
       if (!mounted || generation != _homeGeneration) return;
-      // Absence from five rows says nothing about retention.
-      if (prune) {
-        await store.prune({
-          for (final session in sessions) session.id,
-        }, now: now);
-      }
       archived = (await store.load()).archivedAt(now);
     } catch (_) {
       archived = const {};
