@@ -286,6 +286,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Map<String, String> _sessionTitles = const {};
   int _homeGeneration = 0;
   Future<List<Session>>? _homeFullScan;
+  List<Session>? _homeFirstPageSessions;
+  List<Session>? _chatPreviewSessions;
   List<Session>? _completeHomeSessions;
   bool _chatsInitialLoadConsumed = false;
 
@@ -315,7 +317,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
-  Future<List<Session>> _loadSessionsFromGateway() async {
+  Future<List<Session>> _loadSessionsFromGateway({
+    void Function(List<Session>)? onProgress,
+  }) async {
     final api = _sessionClient;
     // Page through the whole visible list. The gateway serves newest-first
     // in a capped window; a single first-page request truncated the
@@ -345,6 +349,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           newRows++;
         }
       }
+      if (newRows > 0) onProgress?.call(List.unmodifiable(all));
       final pinsOnPage = result.sessions
           .where((session) => session.pinned)
           .length;
@@ -427,6 +432,8 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     final page = await _sessionClient.getSessionsPage(limit: 5);
     final first = page.sessions.take(5).toList(growable: false);
     if (!mounted || generation != _homeGeneration) return first;
+    _homeFirstPageSessions = first;
+    if (_destination == HermesDestination.chats) setState(() {});
     _onHomeSessions(first, generation: generation, complete: false);
     // Give the pane a frame to show the first slice before starting the scan.
     unawaited(
@@ -435,6 +442,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           final full = await _loadFullHomeSessions();
           if (!mounted || generation != _homeGeneration) return;
           _completeHomeSessions = List.unmodifiable(full);
+          if (_destination == HermesDestination.chats) setState(() {});
           _onHomeSessions(full, generation: generation, complete: true);
           onUpdate(full);
         } catch (_) {
@@ -451,7 +459,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Future<List<Session>> _loadFullHomeSessions() {
     final pending = _homeFullScan;
     if (pending != null) return pending;
-    final scan = _loadSessionsFromGateway();
+    final scan = _loadSessionsFromGateway(
+      onProgress: _updateChatPreviewFromScan,
+    );
     _homeFullScan = scan;
     void clear() {
       if (identical(_homeFullScan, scan)) _homeFullScan = null;
@@ -459,6 +469,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
     unawaited(scan.then<void>((_) => clear(), onError: (Object _) => clear()));
     return scan;
+  }
+
+  void _updateChatPreviewFromScan(List<Session> sessions) {
+    if (!mounted || (_chatPreviewSessions?.length ?? 0) >= 5) return;
+    final preview = sessions
+        .where((session) => !session.archived && !isMachineSession(session))
+        .take(5)
+        .toList(growable: false);
+    if (preview.length <= (_chatPreviewSessions?.length ?? 0)) return;
+    _chatPreviewSessions = preview;
+    if (_destination == HermesDestination.chats) setState(() {});
   }
 
   void _onHomeSessions(
@@ -871,19 +892,23 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
   Widget _pane(BuildContext context, HermesDestination destination) {
     switch (destination) {
       case HermesDestination.chats:
+        final preview =
+            _completeHomeSessions ??
+            _chatPreviewSessions ??
+            _homeFirstPageSessions;
         return WorkspaceSessionsScreen(
           title: context.l10n.chats,
           view: WorkspaceSessionView.all,
           embedded: true,
-          // Home already walked the complete bounded list. Show it now; the
-          // first Chats load adds Project/archive metadata in the background.
-          // An unknown claim map keeps Unassigned disabled until that read.
-          initialData: _completeHomeSessions == null
+          // Show the first human chats as Home's scan reaches them. The
+          // provisional list is never mistaken for complete or unassigned.
+          initialData: preview == null
               ? null
               : WorkspaceSessionsData(
-                  sessions: _completeHomeSessions!,
+                  sessions: preview,
                   archivedQuickChatIds: _archivedQuickChats,
                   projectsKnown: false,
+                  isPartial: true,
                 ),
           pinStore: _pinStore,
           refreshInterval: widget.sessionsRefreshInterval,
@@ -1277,7 +1302,12 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     // Reuse Home's complete list or its in-flight scan on first entry. Later
     // refreshes read afresh so a new chat or title cannot stay stale forever.
     final cached = firstLoad ? _completeHomeSessions : null;
-    final pending = firstLoad ? _homeFullScan : null;
+    final pending = firstLoad
+        ? (_homeFullScan ??
+              (cached == null && widget.sessionsLoader == null
+                  ? _loadFullHomeSessions()
+                  : null))
+        : null;
     return _loadWorkspaceSessionsData(
       sessionsFuture: pending ?? (cached == null ? null : Future.value(cached)),
     );

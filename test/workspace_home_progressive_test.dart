@@ -216,6 +216,15 @@ void main() {
     await tester.tap(find.text('Chats').last);
     await tester.pump();
     expect(
+      find.descendant(
+        of: find.byType(WorkspaceSessionsScreen),
+        matching: find.text('Chat 0'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byType(LoadingSkeleton), findsNothing);
+    expect(
       requested.where(
         (uri) =>
             uri.queryParameters['limit'] == '100' &&
@@ -227,5 +236,67 @@ void main() {
     laterPage.complete(_page([]));
     await tester.pumpAndSettle();
     expect(find.text('Chat 0'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets('Chats fills its preview from the scan when five rows are cron', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(500, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final firstFullPage = Completer<http.Response>();
+    final laterPage = Completer<http.Response>();
+    final client = MockClient((request) async {
+      if (request.url.queryParameters['limit'] == '5') {
+        return _page([
+          for (var i = 0; i < 5; i++) {..._row(i), 'source': 'cron'},
+        ]);
+      }
+      if (request.url.queryParameters['offset'] == '0') {
+        return firstFullPage.future;
+      }
+      return laterPage.future;
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        theme: hermesTheme(Brightness.dark),
+        home: WorkspaceScreen(
+          connection: SavedConnection(
+            id: 'cron-preview',
+            label: 'Test',
+            host: 'example.invalid',
+            port: 8642,
+            apiKey: 'test-key',
+          ),
+          testSessionsHttpClient: client,
+          turnSignalsLoader: (_) async => HomeTurnSignals.empty,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.tap(find.text('Chats').last);
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    expect(find.byType(EmptyState), findsNothing);
+    expect(find.text('Chat 0'), findsNothing);
+
+    firstFullPage.complete(
+      _page([
+        for (var i = 0; i < 100; i++)
+          if (i >= 5 && i < 10) _row(i) else {..._row(i), 'source': 'cron'},
+      ]),
+    );
+    await tester.pump();
+    expect(find.text('Chat 5'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+
+    laterPage.complete(_page([]));
+    await tester.pumpAndSettle();
+    expect(find.text('Chat 5'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 }
