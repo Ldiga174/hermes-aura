@@ -43,6 +43,8 @@ def main() -> None:
             "Aura updates must not point to upstream releases")
     require('getBool(checkOnLaunchKey) ?? false' in updates,
             "Automatic update checks must be opt-in")
+    require('com.ldiga.hermesaura.action.QUICK_CHAT' in manifest,
+            'Launcher shortcut action must be unique to Aura')
     require('android:allowBackup="false"' in manifest,
             "Android system backup must be disabled for secret-bearing data")
 
