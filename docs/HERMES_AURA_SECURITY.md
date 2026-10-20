@@ -14,13 +14,13 @@ This is an initial static source review, **not** a claim that the application or
 
 ## Findings (preliminary)
 
-**HIGH — cleartext and trust boundary**: Android manifest enables `usesCleartextTraffic`; `res/xml/network_security_config.xml` enables cleartext traffic and trusts user-added CAs. This can expose API keys on unsafe networks. Before use with non-test credentials, implement/test HTTPS-only production policy and verify server certificate handling.
+**HIGH in upstream — cleartext and trust boundary**: the original Android manifest allowed cleartext traffic and the original network security config trusted user-installed CAs. Hermes Aura source has now changed to `usesCleartextTraffic=false`, `cleartextTrafficPermitted=false`, and system CAs only. This is a **source-level mitigation, not a verified runtime fix**; Android/Flutter networking and emulator tests remain mandatory before any real credentials.
 
 **MEDIUM — configurable high-privilege endpoints**: the client can control sessions, scheduled tasks, approvals and settings on the connected Hermes host. Require least-privilege gateway credentials, server authorization and device lock. Do not use production connection until assessed.
 
 **MEDIUM — configuration export contains credentials**: `config_backup.dart` includes API keys and passwords in the backup payload, but encrypts exported data using PBKDF2-HMAC-SHA256 and AES-256-GCM. Treat backups as secrets; never commit them. Review cryptography and import limits before production use.
 
-**LOW/PRIVACY — external update check**: `app_update_service.dart` checks upstream GitHub Releases and could disclose the device's public IP to GitHub. Redirect/disable it in Aura until independent releases are available.
+**LOW/PRIVACY — external update check**: the original checked upstream GitHub Releases. Aura now uses its own release endpoint and defaults the automatic check to off. Manual checks may still contact GitHub; no releases exist yet.
 
 **POSITIVE**: the connection manager uses `flutter_secure_storage` backed by Android Keystore; Android `allowBackup=false`; no hardcoded token/key patterns in tracked HEAD in a targeted string scan; no obvious Dart TLS bypass callback in the targeted search. These checks do not exclude vulnerabilities or malicious dependencies.
 
@@ -30,8 +30,8 @@ This is an initial static source review, **not** a claim that the application or
 
 ## Release gates
 
-1. Resolve upstream license and attribution.
-2. Audit/lock HTTPS-only networking, authentication, backup, deep-links and file import.
+1. Resolve upstream license and attribution (BLOCKER).
+2. Validate HTTPS-only networking at runtime; audit authentication, backup, deep-links and file import.
 3. Review pinned Flutter dependencies and GitHub workflow supply chain.
 4. Run `flutter analyze`, `flutter test`, Android emulator/device tests.
 5. Inspect signed APK manifest/network behavior and publish checksums from controlled CI.
