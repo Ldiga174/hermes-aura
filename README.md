@@ -1,3 +1,5 @@
+> **Hermes Aura (public fork).** This repository is a community adaptation of Hermes Android. See [project scope and roadmap](HERMES_AURA.md) and [security baseline](docs/HERMES_AURA_SECURITY.md). Runtime keys, server configuration, memories and chats are not published. No Hermes Aura APK is approved for production yet. The upstream licensing discrepancy must be resolved before public binary redistribution.
+
 # Hermes Android — v2.1.23
 
 Android client for [Hermes Agent](https://hermes-agent.nousresearch.com/) — chat with your Hermes sessions from a phone or tablet over local Wi-Fi or a private Tailscale network.
