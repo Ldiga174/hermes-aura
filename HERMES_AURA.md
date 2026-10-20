@@ -19,7 +19,8 @@ Public Android client fork of [rusty4444/hermes-android](https://github.com/rust
 - [ ] Resolve licensing uncertainty before distributing our binaries.
 - [x] Restrict production Android network config to system CA and disallow cleartext at source level (runtime tests pending).
 - [x] Set Aura Android application label and separate application ID (not built/tested yet).
-- [ ] Review dependencies and tests; build isolated unsigned test artifacts.
+- [x] Run synthetic gateway contract tests and offline Android source security checks.
+- [ ] Run Flutter analyzer/unit/widget suite and compile an isolated validation APK (not yet completed).
 - [ ] Test with a disposable gateway, then ship independently signed APKs.
 
 See [security baseline](docs/HERMES_AURA_SECURITY.md) for findings, limitations and release requirements.
