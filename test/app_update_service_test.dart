@@ -80,7 +80,7 @@ void main() {
       final client = MockClient((request) async {
         expect(
           request.url.path,
-          '/repos/rusty4444/hermes-android/releases/latest',
+          '/repos/Ldiga174/hermes-aura/releases/latest',
         );
         expect(request.headers['Accept'], 'application/vnd.github+json');
         return http.Response(releaseJson(), 200, headers: {'etag': 'W/"abc"'});
@@ -328,6 +328,7 @@ void main() {
         ),
       );
 
+      await service.setCheckOnLaunchEnabled(true);
       final release = await service.launchPromptRelease(
         currentVersion: '2.1.19',
       );
@@ -358,6 +359,7 @@ void main() {
           (request) async => http.Response(releaseJson(), 200),
         ),
       );
+      await service.setCheckOnLaunchEnabled(true);
       await service.skipVersion('2.1.20');
 
       expect(
@@ -372,8 +374,10 @@ void main() {
           (request) async => http.Response(releaseJson(tag: 'v2.1.21'), 200),
         ),
       );
+      await service.setCheckOnLaunchEnabled(true);
       await service.skipVersion('2.1.20');
 
+      await service.setCheckOnLaunchEnabled(true);
       final release = await service.launchPromptRelease(
         currentVersion: '2.1.19',
       );
@@ -389,6 +393,7 @@ void main() {
             (request) async => http.Response(releaseJson(tag: 'v2.1.19'), 200),
           ),
         );
+        await current.setCheckOnLaunchEnabled(true);
         expect(
           await current.launchPromptRelease(currentVersion: '2.1.19'),
           isNull,
@@ -397,6 +402,7 @@ void main() {
         final offline = AppUpdateService(
           client: MockClient((request) async => throw const SocketFailure()),
         );
+        await offline.setCheckOnLaunchEnabled(true);
         expect(
           await offline.launchPromptRelease(currentVersion: '2.1.19'),
           isNull,
@@ -424,11 +430,11 @@ void main() {
         isFalse,
       );
     });
-    test('launch checks are on until the user turns them off', () async {
+    test('launch checks are off until the user turns them on', () async {
       final service = AppUpdateService();
-      expect(await service.checkOnLaunchEnabled(), isTrue);
-      await service.setCheckOnLaunchEnabled(false);
       expect(await service.checkOnLaunchEnabled(), isFalse);
+      await service.setCheckOnLaunchEnabled(true);
+      expect(await service.checkOnLaunchEnabled(), isTrue);
     });
 
     test('skip bookkeeping normalises and clears', () async {
