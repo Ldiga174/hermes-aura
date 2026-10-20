@@ -29,12 +29,12 @@ android {
            "versionCode ${flutter.versionCode} must be greater than " +
                "$minimumInstalledVersionCode to upgrade the accepted Hermes APK"
        }
-       applicationId = "com.hermesagent.hermes_android"
+       applicationId = "com.ldiga.hermesaura"
        minSdk = 24
        targetSdk = 36
        versionCode = flutter.versionCode
        versionName = flutter.versionName
-       manifestPlaceholders["appLabel"] = "Hermes Agent"
+       manifestPlaceholders["appLabel"] = "Hermes Aura"
    }
 
    signingConfigs {
@@ -55,7 +55,7 @@ android {
            // verifies the packaged arm64 code against that scheme.
            applicationIdSuffix = ".dev"
            versionNameSuffix = "-dev"
-           manifestPlaceholders["appLabel"] = "Hermes Agent Dev"
+           manifestPlaceholders["appLabel"] = "Hermes Aura Dev"
        }
        release {
            // CI/local analysis may build a release artifact without access to
