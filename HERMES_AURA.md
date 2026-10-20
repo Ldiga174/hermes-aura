@@ -17,8 +17,8 @@ Public Android client fork of [rusty4444/hermes-android](https://github.com/rust
 - [x] Initial static inspection and public security baseline.
 - [x] Establish no-secrets policy and public project identity.
 - [ ] Resolve licensing uncertainty before distributing our binaries.
-- [ ] Enforce secure transport for release builds, with explicit safe test configuration.
-- [ ] Add Aura visual identity and separate Android application ID.
+- [x] Restrict production Android network config to system CA and disallow cleartext at source level (runtime tests pending).
+- [x] Set Aura Android application label and separate application ID (not built/tested yet).
 - [ ] Review dependencies and tests; build isolated unsigned test artifacts.
 - [ ] Test with a disposable gateway, then ship independently signed APKs.
 
