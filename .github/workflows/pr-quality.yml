@@ -1,152 +1,69 @@
-name: PR Quality Checks
+name: Hermes Aura - Isolated Validation
 
+# Manual, no public PR execution, no release distribution.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
 
 permissions:
   contents: read
-  pull-requests: read
-  checks: write
+
+concurrency:
+  group: aura-isolated-validation
+  cancel-in-progress: false
 
 jobs:
-  quality:
-    name: Analyze & Test
+  verify:
+    name: Source, gateway, Flutter and debug Android build
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout public source only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 pinned
+        with:
+          persist-credentials: false
 
-      - name: Verify README release window
+      - name: Offline Android security configuration check
+        run: python3 tools/aura_security_check.py
+
+      - name: Synthetic gateway contract tests (loopback only)
         run: |
-          python3 -m unittest scripts.test_check_readme_release_window
-          python3 scripts/check_readme_release_window.py
+          set -euo pipefail
+          python3 -m pip install -r tools/fake_gateway/requirements.txt
+          python3 tools/fake_gateway/fake_gateway.py --host 127.0.0.1 --port 18642 --api-key test-key > /tmp/aura-fixture.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          sleep 2
+          python3 tools/fake_gateway/test_fake_gateway.py --url http://127.0.0.1:18642
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - name: Java 17
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4 pinned
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter 3.44.0
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2 pinned
         with:
           flutter-version: '3.44.0'
-          channel: 'stable'
+          channel: stable
+          cache: false
 
-      - name: Cache Flutter dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.pub-cache
-          key: flutter-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
-          restore-keys: flutter-${{ runner.os }}-
+      - name: Resolve locked dependencies
+        run: flutter pub get --enforce-lockfile
 
-      - name: Install dependencies
-        run: flutter pub get
-        id: pub_get
+      - name: Flutter static analysis
+        run: flutter analyze --no-pub --fatal-infos
 
-      - name: Verify release identity and upgrade versionCode
-        env:
-          MINIMUM_INSTALLED_VERSION_CODE: '2127'
-          REQUIRED_BASE_VERSION_CODE: '2166'
+      - name: Flutter unit and widget tests
+        run: flutter test --no-pub
+
+      - name: Build debug Android APK for validation only
+        run: flutter build apk --debug --split-per-abi
+
+      - name: Verify locally produced validation APK
+        shell: bash
         run: |
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import re
-
-          match = re.search(
-              r"^version:\s*([^\s+]+)\+(\d+)\s*$",
-              pathlib.Path("pubspec.yaml").read_text(),
-              re.M,
-          )
-          if not match:
-              raise SystemExit("pubspec.yaml must declare versionName+versionCode")
-
-          version_name, version_code_text = match.groups()
-          version_code = int(version_code_text)
-          minimum = int(os.environ["MINIMUM_INSTALLED_VERSION_CODE"])
-          required_base = int(os.environ["REQUIRED_BASE_VERSION_CODE"])
-          if version_code <= minimum:
-              raise SystemExit(
-                  f"versionCode {version_code} must be greater than {minimum}"
-              )
-          if version_code != required_base:
-              raise SystemExit(
-                  f"versionCode {version_code} does not match required base "
-                  f"{required_base}"
-              )
-
-          print(
-              f"Verified {version_name}+{version_code}; upgrade floor is {minimum}; "
-              f"required base is {required_base}"
-          )
-          PY
-
-      # ── Step 1: Static analysis ──────────────────────────
-      - name: Static analysis
-        id: analyze
-        continue-on-error: true
-        run: |
-          flutter analyze --no-pub --fatal-infos 2>&1 | tee analyze_output.txt
-          exit ${PIPESTATUS[0]}
-
-      # ── Step 2: Run tests ────────────────────────────────
-      - name: Run tests
-        id: test
-        continue-on-error: true
-        run: |
-          flutter test --no-pub --reporter=expanded 2>&1 | tee test_output.txt
-          exit ${PIPESTATUS[0]}
-
-      # ── Step 3: Summary & failure report ─────────────────
-      - name: Failure summary
-        if: steps.analyze.outcome != 'success' || steps.test.outcome != 'success'
-        run: |
-          echo "## Quality checks failed" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          if [ "${{ steps.analyze.outcome }}" != "success" ]; then
-            echo "### Static analysis failed" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat analyze_output.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### Static analysis passed" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          if [ "${{ steps.test.outcome }}" != "success" ]; then
-            echo "### Tests failed" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            cat test_output.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### All tests passed" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      # ── Step 4: Pass/fail enforcement ────────────────────
-      - name: Enforce checks
-        if: steps.analyze.outcome != 'success' || steps.test.outcome != 'success'
-        run: |
-          echo "──────────────────────────────────────────────"
-          echo "Quality gate blocked - see summary above."
-          echo ""
-          if [ "${{ steps.analyze.outcome }}" != "success" ]; then
-            echo "   FAILED: flutter analyze"
-          else
-            echo "   PASSED:  flutter analyze"
-          fi
-          if [ "${{ steps.test.outcome }}" != "success" ]; then
-            echo "   FAILED: flutter test"
-          else
-            echo "   PASSED:  flutter test"
-          fi
-          echo "──────────────────────────────────────────────"
-          exit 1
-
-      - name: All checks passed
-        if: steps.analyze.outcome == 'success' && steps.test.outcome == 'success'
-        run: |
-          echo "## All quality checks passed" >> $GITHUB_STEP_SUMMARY
-          echo "- Static analysis: clean" >> $GITHUB_STEP_SUMMARY
-          echo "- All tests: passing" >> $GITHUB_STEP_SUMMARY
+          set -euo pipefail
+          ls -lh build/app/outputs/flutter-apk/*debug*.apk
+          find build/app/outputs/flutter-apk -name '*debug*.apk' -type f -print0 | xargs -0 sha256sum
+          echo 'Debug APK is intentionally not uploaded or released pending license and security review.'
