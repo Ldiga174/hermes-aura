@@ -158,7 +158,7 @@ class AppUpdateService {
 
   /// The upstream project whose releases the app follows.
   static const releasesApiUrl =
-      'https://api.github.com/repos/rusty4444/hermes-android/releases/latest';
+      'https://api.github.com/repos/Ldiga174/hermes-aura/releases/latest';
 
   /// How long a check counts for. GitHub answers unauthenticated callers on a
   /// per-IP budget, and a launch several times an hour must not spend it.
@@ -266,7 +266,7 @@ class AppUpdateService {
   }
 
   Future<bool> checkOnLaunchEnabled() async =>
-      (await _prefs).getBool(checkOnLaunchKey) ?? true;
+      (await _prefs).getBool(checkOnLaunchKey) ?? false;
 
   Future<void> setCheckOnLaunchEnabled(bool enabled) async {
     final preferences = await _prefs;
