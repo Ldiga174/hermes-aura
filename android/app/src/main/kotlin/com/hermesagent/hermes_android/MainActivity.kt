@@ -14,7 +14,7 @@ import java.util.UUID
 class MainActivity : FlutterActivity() {
     private val shareChannelName = "com.hermesagent.hermes_android/share"
     private val launchChannelName = "com.hermesagent.hermes_android/launch"
-    private val quickChatAction = "com.hermesagent.hermes_android.action.QUICK_CHAT"
+    private val quickChatAction = "com.ldiga.hermesaura.action.QUICK_CHAT"
     private val maxSharedItems = 10
     private val maxSharedBytes = 64L * 1024L * 1024L
     private var shareChannel: MethodChannel? = null
